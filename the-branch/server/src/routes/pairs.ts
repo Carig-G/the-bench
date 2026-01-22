@@ -64,7 +64,9 @@ router.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
 
     const pairs = db.prepare(`
       SELECT cp.*,
-        CASE WHEN cp.user_a_id = ? THEN u_b.username ELSE u_a.username END as partner_username,
+        CASE WHEN cp.revealed = 1 THEN
+          CASE WHEN cp.user_a_id = ? THEN u_b.username ELSE u_a.username END
+        END as partner_username,
         CASE WHEN cp.user_a_id = ? THEN cp.user_b_id ELSE cp.user_a_id END as partner_id,
         CASE WHEN cp.user_a_id = ? THEN cp.user_a_reveal_requested ELSE cp.user_b_reveal_requested END as i_requested_reveal,
         CASE WHEN cp.user_a_id = ? THEN cp.user_b_reveal_requested ELSE cp.user_a_reveal_requested END as partner_requested_reveal,
@@ -95,7 +97,6 @@ router.get('/reveal-eligible', authenticateToken, (req: AuthRequest, res: Respon
 
     const pairs = db.prepare(`
       SELECT cp.*,
-        CASE WHEN cp.user_a_id = ? THEN u_b.username ELSE u_a.username END as partner_username,
         CASE WHEN cp.user_a_id = ? THEN cp.user_b_id ELSE cp.user_a_id END as partner_id,
         CASE WHEN cp.user_a_id = ? THEN cp.user_a_reveal_requested ELSE cp.user_b_reveal_requested END as i_requested_reveal,
         CASE WHEN cp.user_a_id = ? THEN cp.user_b_reveal_requested ELSE cp.user_a_reveal_requested END as partner_requested_reveal
@@ -106,7 +107,7 @@ router.get('/reveal-eligible', authenticateToken, (req: AuthRequest, res: Respon
         AND cp.conversation_count >= 10
         AND cp.revealed = 0
       ORDER BY cp.conversation_count DESC
-    `).all(userId, userId, userId, userId, userId, userId);
+    `).all(userId, userId, userId, userId, userId);
 
     res.json({ pairs });
   } catch (error) {

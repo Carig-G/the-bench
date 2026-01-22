@@ -79,6 +79,16 @@ export function Connections() {
   const revealedPairs = pairsList.filter(p => p.revealed);
   const inProgressPairs = pairsList.filter(p => p.conversation_count < 10);
 
+  // Generate consistent anonymous name for unrevealed partners
+  const getAnonymousName = (pairId: number) => {
+    // Use pair ID to generate a consistent anonymous identifier
+    const adjectives = ['Curious', 'Thoughtful', 'Friendly', 'Wise', 'Kind', 'Bright', 'Calm', 'Bold'];
+    const animals = ['Owl', 'Fox', 'Bear', 'Deer', 'Wolf', 'Hawk', 'Otter', 'Raven'];
+    const adjIndex = pairId % adjectives.length;
+    const animalIndex = Math.floor(pairId / adjectives.length) % animals.length;
+    return `${adjectives[adjIndex]} ${animals[animalIndex]}`;
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Header */}
@@ -161,7 +171,7 @@ export function Connections() {
                       <div>
                         <div className="flex items-center gap-3 mb-2">
                           <span className="font-semibold text-warmgray-700">
-                            {pair.partner_username}
+                            {getAnonymousName(pair.id)}
                           </span>
                           <span className="px-2 py-0.5 bg-sage-100 text-sage-600 rounded-full text-xs">
                             {pair.conversation_count} conversations
@@ -244,7 +254,7 @@ export function Connections() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <span className="font-medium text-warmgray-700">
-                          {pair.partner_username}
+                          {getAnonymousName(pair.id)}
                         </span>
                         <span className="text-sm text-warmgray-500">
                           {pair.conversation_count} / 10 conversations
