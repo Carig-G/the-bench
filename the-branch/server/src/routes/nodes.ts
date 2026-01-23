@@ -6,16 +6,16 @@ import { StoryNode, Story } from '../types/index.js';
 const router = Router();
 
 // Get a single node with its children
-router.get('/:id', optionalAuth, (req: AuthRequest, res: Response) => {
+router.get('/:id', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    const node = db.prepare(`
+    const node = await db.queryOne(`
       SELECT sn.*, u.username as author_username
       FROM story_nodes sn
       JOIN users u ON sn.author_id = u.id
-      WHERE sn.id = ?
-    `).get(id);
+      WHERE sn.id = $1
+    `, [id]);
 
     if (!node) {
       res.status(404).json({ error: 'Node not found' });
@@ -23,15 +23,15 @@ router.get('/:id', optionalAuth, (req: AuthRequest, res: Response) => {
     }
 
     // Get children (branches)
-    const children = db.prepare(`
+    const childrenResult = await db.pool.query(`
       SELECT sn.*, u.username as author_username
       FROM story_nodes sn
       JOIN users u ON sn.author_id = u.id
-      WHERE sn.parent_node_id = ?
+      WHERE sn.parent_node_id = $1
       ORDER BY sn.created_at
-    `).all(id);
+    `, [id]);
 
-    res.json({ node, children });
+    res.json({ node, children: childrenResult.rows });
   } catch (error) {
     console.error('Get node error:', error);
     res.status(500).json({ error: 'Failed to get node' });
@@ -39,17 +39,17 @@ router.get('/:id', optionalAuth, (req: AuthRequest, res: Response) => {
 });
 
 // Get path from root to a specific node
-router.get('/:id/path', optionalAuth, (req: AuthRequest, res: Response) => {
+router.get('/:id/path', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    // SQLite supports recursive CTEs
-    const path = db.prepare(`
+    // PostgreSQL also supports recursive CTEs
+    const pathResult = await db.pool.query(`
       WITH RECURSIVE node_path AS (
         SELECT sn.*, u.username as author_username, 1 as depth
         FROM story_nodes sn
         JOIN users u ON sn.author_id = u.id
-        WHERE sn.id = ?
+        WHERE sn.id = $1
 
         UNION ALL
 
@@ -59,14 +59,14 @@ router.get('/:id/path', optionalAuth, (req: AuthRequest, res: Response) => {
         JOIN node_path np ON sn.id = np.parent_node_id
       )
       SELECT * FROM node_path ORDER BY depth DESC
-    `).all(id);
+    `, [id]);
 
-    if (path.length === 0) {
+    if (pathResult.rows.length === 0) {
       res.status(404).json({ error: 'Node not found' });
       return;
     }
 
-    res.json({ path });
+    res.json({ path: pathResult.rows });
   } catch (error) {
     console.error('Get node path error:', error);
     res.status(500).json({ error: 'Failed to get node path' });
@@ -74,7 +74,7 @@ router.get('/:id/path', optionalAuth, (req: AuthRequest, res: Response) => {
 });
 
 // Create a branch (add continuation to a node)
-router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { storyId, parentNodeId, content } = req.body;
 
@@ -84,16 +84,17 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Get story and parent node
-    const story = db.prepare('SELECT * FROM stories WHERE id = ?').get(storyId) as Story | undefined;
+    const story = await db.queryOne<Story>('SELECT * FROM stories WHERE id = $1', [storyId]);
 
     if (!story) {
       res.status(404).json({ error: 'Story not found' });
       return;
     }
 
-    const parentNode = db.prepare(
-      'SELECT * FROM story_nodes WHERE id = ? AND story_id = ?'
-    ).get(parentNodeId, storyId) as StoryNode | undefined;
+    const parentNode = await db.queryOne<StoryNode>(
+      'SELECT * FROM story_nodes WHERE id = $1 AND story_id = $2',
+      [parentNodeId, storyId]
+    );
 
     if (!parentNode) {
       res.status(404).json({ error: 'Parent node not found' });
@@ -101,11 +102,12 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Check branch limit
-    const branchCountResult = db.prepare(
-      'SELECT COUNT(*) as count FROM story_nodes WHERE parent_node_id = ?'
-    ).get(parentNodeId) as { count: number };
+    const branchCountResult = await db.queryOne<{ count: string }>(
+      'SELECT COUNT(*) as count FROM story_nodes WHERE parent_node_id = $1',
+      [parentNodeId]
+    );
 
-    if (branchCountResult.count >= story.max_branches) {
+    if (parseInt(branchCountResult!.count) >= story.max_branches) {
       res.status(400).json({
         error: `Maximum branches (${story.max_branches}) reached for this node`
       });
@@ -113,16 +115,18 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Check contributor limit
-    const contributorResult = db.prepare(
-      'SELECT COUNT(DISTINCT author_id) as count FROM story_nodes WHERE story_id = ?'
-    ).get(storyId) as { count: number };
+    const contributorResult = await db.queryOne<{ count: string }>(
+      'SELECT COUNT(DISTINCT author_id) as count FROM story_nodes WHERE story_id = $1',
+      [storyId]
+    );
 
     // Check if user is already a contributor
-    const isContributor = db.prepare(
-      'SELECT 1 FROM story_nodes WHERE story_id = ? AND author_id = ? LIMIT 1'
-    ).get(storyId, req.user!.userId);
+    const isContributor = await db.queryOne(
+      'SELECT 1 FROM story_nodes WHERE story_id = $1 AND author_id = $2 LIMIT 1',
+      [storyId, req.user!.userId]
+    );
 
-    if (!isContributor && contributorResult.count >= story.max_contributors) {
+    if (!isContributor && parseInt(contributorResult!.count) >= story.max_contributors) {
       res.status(400).json({
         error: `Maximum contributors (${story.max_contributors}) reached for this story`
       });
@@ -131,18 +135,19 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 
     // Create the new node
     const newPosition = parentNode.position + 1;
-    const result = db.prepare(`
+    const result = await db.pool.query(`
       INSERT INTO story_nodes (story_id, parent_node_id, content, author_id, position)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(storyId, parentNodeId, content, req.user!.userId, newPosition);
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id
+    `, [storyId, parentNodeId, content, req.user!.userId, newPosition]);
 
     // Get with author username
-    const node = db.prepare(`
+    const node = await db.queryOne(`
       SELECT sn.*, u.username as author_username
       FROM story_nodes sn
       JOIN users u ON sn.author_id = u.id
-      WHERE sn.id = ?
-    `).get(result.lastInsertRowid);
+      WHERE sn.id = $1
+    `, [result.rows[0].id]);
 
     res.status(201).json({ node });
   } catch (error) {
@@ -152,7 +157,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // Update a node (author only)
-router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+router.patch('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { content } = req.body;
@@ -162,7 +167,7 @@ router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const existing = db.prepare('SELECT * FROM story_nodes WHERE id = ?').get(id) as StoryNode | undefined;
+    const existing = await db.queryOne<StoryNode>('SELECT * FROM story_nodes WHERE id = $1', [id]);
 
     if (!existing) {
       res.status(404).json({ error: 'Node not found' });
@@ -174,14 +179,14 @@ router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
       return;
     }
 
-    db.prepare('UPDATE story_nodes SET content = ? WHERE id = ?').run(content, id);
+    await db.pool.query('UPDATE story_nodes SET content = $1 WHERE id = $2', [content, id]);
 
-    const node = db.prepare(`
+    const node = await db.queryOne(`
       SELECT sn.*, u.username as author_username
       FROM story_nodes sn
       JOIN users u ON sn.author_id = u.id
-      WHERE sn.id = ?
-    `).get(id);
+      WHERE sn.id = $1
+    `, [id]);
 
     res.json({ node });
   } catch (error) {
@@ -191,11 +196,11 @@ router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // Delete a node and all its children (author only)
-router.delete('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    const existing = db.prepare('SELECT * FROM story_nodes WHERE id = ?').get(id) as StoryNode | undefined;
+    const existing = await db.queryOne<StoryNode>('SELECT * FROM story_nodes WHERE id = $1', [id]);
 
     if (!existing) {
       res.status(404).json({ error: 'Node not found' });
@@ -214,9 +219,10 @@ router.delete('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Check if node has children from other authors
-    const otherAuthorsChildren = db.prepare(
-      'SELECT 1 FROM story_nodes WHERE parent_node_id = ? AND author_id != ? LIMIT 1'
-    ).get(id, req.user!.userId);
+    const otherAuthorsChildren = await db.queryOne(
+      'SELECT 1 FROM story_nodes WHERE parent_node_id = $1 AND author_id != $2 LIMIT 1',
+      [id, req.user!.userId]
+    );
 
     if (otherAuthorsChildren) {
       res.status(400).json({
@@ -226,7 +232,7 @@ router.delete('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Delete node (CASCADE will handle children)
-    db.prepare('DELETE FROM story_nodes WHERE id = ?').run(id);
+    await db.pool.query('DELETE FROM story_nodes WHERE id = $1', [id]);
 
     res.json({ message: 'Node deleted' });
   } catch (error) {

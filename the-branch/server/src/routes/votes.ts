@@ -5,20 +5,20 @@ import { authenticateToken, AuthRequest } from '../middleware/auth.js';
 const router = Router();
 
 // Get votes for a story
-router.get('/story/:storyId', (req, res: Response) => {
+router.get('/story/:storyId', async (req, res: Response) => {
   try {
     const { storyId } = req.params;
 
-    const rows = db.prepare(`
+    const result = await db.pool.query(`
       SELECT vote_type, COUNT(*) as count
       FROM votes
-      WHERE story_id = ?
+      WHERE story_id = $1
       GROUP BY vote_type
-    `).all(storyId) as { vote_type: string; count: number }[];
+    `, [storyId]);
 
     const votes: Record<string, number> = {};
-    for (const row of rows) {
-      votes[row.vote_type] = row.count;
+    for (const row of result.rows as { vote_type: string; count: string }[]) {
+      votes[row.vote_type] = parseInt(row.count);
     }
 
     res.json({ votes });
@@ -29,15 +29,16 @@ router.get('/story/:storyId', (req, res: Response) => {
 });
 
 // Get user's vote for a story
-router.get('/story/:storyId/me', authenticateToken, (req: AuthRequest, res: Response) => {
+router.get('/story/:storyId/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { storyId } = req.params;
 
-    const votes = db.prepare(
-      'SELECT * FROM votes WHERE story_id = ? AND user_id = ?'
-    ).all(storyId, req.user!.userId);
+    const result = await db.pool.query(
+      'SELECT * FROM votes WHERE story_id = $1 AND user_id = $2',
+      [storyId, req.user!.userId]
+    );
 
-    res.json({ votes });
+    res.json({ votes: result.rows });
   } catch (error) {
     console.error('Get user vote error:', error);
     res.status(500).json({ error: 'Failed to get vote' });
@@ -45,7 +46,7 @@ router.get('/story/:storyId/me', authenticateToken, (req: AuthRequest, res: Resp
 });
 
 // Add a vote
-router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { storyId, voteType } = req.body;
 
@@ -60,7 +61,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Check story exists
-    const storyExists = db.prepare('SELECT 1 FROM stories WHERE id = ?').get(storyId);
+    const storyExists = await db.queryOne('SELECT 1 FROM stories WHERE id = $1', [storyId]);
 
     if (!storyExists) {
       res.status(404).json({ error: 'Story not found' });
@@ -68,9 +69,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Check if vote already exists
-    const existingVote = db.prepare(
-      'SELECT 1 FROM votes WHERE story_id = ? AND user_id = ? AND vote_type = ?'
-    ).get(storyId, req.user!.userId, voteType);
+    const existingVote = await db.queryOne(
+      'SELECT 1 FROM votes WHERE story_id = $1 AND user_id = $2 AND vote_type = $3',
+      [storyId, req.user!.userId, voteType]
+    );
 
     if (existingVote) {
       res.status(200).json({ message: 'Vote already exists' });
@@ -78,11 +80,12 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Insert vote
-    const result = db.prepare(
-      'INSERT INTO votes (story_id, user_id, vote_type) VALUES (?, ?, ?)'
-    ).run(storyId, req.user!.userId, voteType);
+    const result = await db.pool.query(
+      'INSERT INTO votes (story_id, user_id, vote_type) VALUES ($1, $2, $3) RETURNING id',
+      [storyId, req.user!.userId, voteType]
+    );
 
-    const vote = db.prepare('SELECT * FROM votes WHERE id = ?').get(result.lastInsertRowid);
+    const vote = await db.queryOne('SELECT * FROM votes WHERE id = $1', [result.rows[0].id]);
 
     res.status(201).json({ vote });
   } catch (error) {
@@ -92,7 +95,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // Remove a vote
-router.delete('/', authenticateToken, (req: AuthRequest, res: Response) => {
+router.delete('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { storyId, voteType } = req.body;
 
@@ -101,11 +104,12 @@ router.delete('/', authenticateToken, (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const result = db.prepare(
-      'DELETE FROM votes WHERE story_id = ? AND user_id = ? AND vote_type = ?'
-    ).run(storyId, req.user!.userId, voteType);
+    const result = await db.pool.query(
+      'DELETE FROM votes WHERE story_id = $1 AND user_id = $2 AND vote_type = $3',
+      [storyId, req.user!.userId, voteType]
+    );
 
-    if (result.changes === 0) {
+    if (result.rowCount === 0) {
       res.status(404).json({ error: 'Vote not found' });
       return;
     }

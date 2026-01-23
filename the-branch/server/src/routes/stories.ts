@@ -6,27 +6,27 @@ import { Story } from '../types/index.js';
 const router = Router();
 
 // Get all stories (paginated)
-router.get('/', optionalAuth, (req: AuthRequest, res: Response) => {
+router.get('/', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
     const offset = (page - 1) * limit;
 
-    const stories = db.prepare(`
+    const storiesResult = await db.pool.query(`
       SELECT s.*, u.username as creator_username,
         (SELECT COUNT(*) FROM story_nodes WHERE story_id = s.id) as node_count,
         (SELECT COUNT(*) FROM votes WHERE story_id = s.id AND vote_type = 'complete') as complete_votes
       FROM stories s
       JOIN users u ON s.creator_id = u.id
       ORDER BY s.created_at DESC
-      LIMIT ? OFFSET ?
-    `).all(limit, offset);
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
 
-    const countResult = db.prepare('SELECT COUNT(*) as count FROM stories').get() as { count: number };
-    const total = countResult.count;
+    const countResult = await db.queryOne<{ count: string }>('SELECT COUNT(*) as count FROM stories');
+    const total = parseInt(countResult!.count);
 
     res.json({
-      stories,
+      stories: storiesResult.rows,
       pagination: {
         page,
         limit,
@@ -41,17 +41,17 @@ router.get('/', optionalAuth, (req: AuthRequest, res: Response) => {
 });
 
 // Get single story with full tree structure
-router.get('/:id', optionalAuth, (req: AuthRequest, res: Response) => {
+router.get('/:id', optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    const story = db.prepare(`
+    const story = await db.queryOne<Story & { creator_username: string; complete_votes: number }>(`
       SELECT s.*, u.username as creator_username,
         (SELECT COUNT(*) FROM votes WHERE story_id = s.id AND vote_type = 'complete') as complete_votes
       FROM stories s
       JOIN users u ON s.creator_id = u.id
-      WHERE s.id = ?
-    `).get(id) as Story | undefined;
+      WHERE s.id = $1
+    `, [id]);
 
     if (!story) {
       res.status(404).json({ error: 'Story not found' });
@@ -59,23 +59,24 @@ router.get('/:id', optionalAuth, (req: AuthRequest, res: Response) => {
     }
 
     // Get all nodes for this story
-    const nodes = db.prepare(`
+    const nodesResult = await db.pool.query(`
       SELECT sn.*, u.username as author_username
       FROM story_nodes sn
       JOIN users u ON sn.author_id = u.id
-      WHERE sn.story_id = ?
+      WHERE sn.story_id = $1
       ORDER BY sn.position, sn.created_at
-    `).all(id);
+    `, [id]);
 
     // Get unique contributors count
-    const contributorsResult = db.prepare(
-      'SELECT COUNT(DISTINCT author_id) as count FROM story_nodes WHERE story_id = ?'
-    ).get(id) as { count: number };
+    const contributorsResult = await db.queryOne<{ count: string }>(
+      'SELECT COUNT(DISTINCT author_id) as count FROM story_nodes WHERE story_id = $1',
+      [id]
+    );
 
     res.json({
       story,
-      nodes,
-      contributors: contributorsResult.count,
+      nodes: nodesResult.rows,
+      contributors: parseInt(contributorsResult!.count),
     });
   } catch (error) {
     console.error('Get story error:', error);
@@ -84,7 +85,7 @@ router.get('/:id', optionalAuth, (req: AuthRequest, res: Response) => {
 });
 
 // Create new story with first chapter
-router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { title, description, firstChapter, maxBranches, maxContributors } = req.body;
 
@@ -98,33 +99,34 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const transaction = db.transaction(() => {
+    const result = await db.transaction(async (client) => {
       // Create story
-      const storyResult = db.prepare(`
+      const storyResult = await client.query(`
         INSERT INTO stories (title, description, creator_id, max_branches, max_contributors)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+      `, [
         title,
         description || null,
         req.user!.userId,
         maxBranches || 3,
         maxContributors || 10
-      );
+      ]);
 
-      const story = db.prepare('SELECT * FROM stories WHERE id = ?').get(storyResult.lastInsertRowid) as Story;
+      const story = storyResult.rows[0] as Story;
 
       // Create root node (first chapter)
-      const nodeResult = db.prepare(`
+      const nodeResult = await client.query(`
         INSERT INTO story_nodes (story_id, parent_node_id, content, author_id, position)
-        VALUES (?, NULL, ?, ?, 0)
-      `).run(story.id, firstChapter, req.user!.userId);
+        VALUES ($1, NULL, $2, $3, 0)
+        RETURNING *
+      `, [story.id, firstChapter, req.user!.userId]);
 
-      const rootNode = db.prepare('SELECT * FROM story_nodes WHERE id = ?').get(nodeResult.lastInsertRowid);
+      const rootNode = nodeResult.rows[0];
 
       return { story, rootNode };
     });
 
-    const result = transaction();
     res.status(201).json(result);
   } catch (error) {
     console.error('Create story error:', error);
@@ -133,13 +135,13 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // Update story (creator only)
-router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+router.patch('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const id = req.params.id as string;
     const { title, description, maxBranches, maxContributors } = req.body;
 
     // Check ownership
-    const existing = db.prepare('SELECT * FROM stories WHERE id = ?').get(id) as Story | undefined;
+    const existing = await db.queryOne<Story>('SELECT * FROM stories WHERE id = $1', [id]);
 
     if (!existing) {
       res.status(404).json({ error: 'Story not found' });
@@ -153,21 +155,22 @@ router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
 
     const updates: string[] = [];
     const values: (string | number)[] = [];
+    let paramIndex = 1;
 
     if (title !== undefined) {
-      updates.push('title = ?');
+      updates.push(`title = $${paramIndex++}`);
       values.push(title);
     }
     if (description !== undefined) {
-      updates.push('description = ?');
+      updates.push(`description = $${paramIndex++}`);
       values.push(description);
     }
     if (maxBranches !== undefined) {
-      updates.push('max_branches = ?');
+      updates.push(`max_branches = $${paramIndex++}`);
       values.push(maxBranches);
     }
     if (maxContributors !== undefined) {
-      updates.push('max_contributors = ?');
+      updates.push(`max_contributors = $${paramIndex++}`);
       values.push(maxContributors);
     }
 
@@ -177,9 +180,9 @@ router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     values.push(parseInt(id));
-    db.prepare(`UPDATE stories SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await db.pool.query(`UPDATE stories SET ${updates.join(', ')} WHERE id = $${paramIndex}`, values);
 
-    const story = db.prepare('SELECT * FROM stories WHERE id = ?').get(id);
+    const story = await db.queryOne('SELECT * FROM stories WHERE id = $1', [id]);
     res.json({ story });
   } catch (error) {
     console.error('Update story error:', error);
@@ -188,11 +191,11 @@ router.patch('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // Delete story (creator only)
-router.delete('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    const existing = db.prepare('SELECT * FROM stories WHERE id = ?').get(id) as Story | undefined;
+    const existing = await db.queryOne<Story>('SELECT * FROM stories WHERE id = $1', [id]);
 
     if (!existing) {
       res.status(404).json({ error: 'Story not found' });
@@ -204,7 +207,7 @@ router.delete('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
       return;
     }
 
-    db.prepare('DELETE FROM stories WHERE id = ?').run(id);
+    await db.pool.query('DELETE FROM stories WHERE id = $1', [id]);
 
     res.json({ message: 'Story deleted' });
   } catch (error) {

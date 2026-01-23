@@ -1,12 +1,12 @@
 -- Matching queue for users waiting to be paired
 CREATE TABLE matching_queue (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
   topic TEXT NOT NULL,
   description TEXT,
   matched INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_matching_queue_user ON matching_queue(user_id);

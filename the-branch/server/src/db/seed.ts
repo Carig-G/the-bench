@@ -17,16 +17,19 @@ async function seed() {
   const userIds: Record<string, number> = {};
 
   for (const user of users) {
-    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(user.username) as { id: number } | undefined;
+    const existing = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE username = $1', [user.username]);
 
     if (existing) {
       userIds[user.username] = existing.id;
       console.log(`User ${user.username} already exists (id: ${existing.id})`);
     } else {
       const hash = await bcrypt.hash(user.password, SALT_ROUNDS);
-      const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(user.username, hash);
-      userIds[user.username] = result.lastInsertRowid as number;
-      console.log(`Created user ${user.username} (id: ${result.lastInsertRowid})`);
+      const result = await db.pool.query(
+        'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id',
+        [user.username, hash]
+      );
+      userIds[user.username] = result.rows[0].id;
+      console.log(`Created user ${user.username} (id: ${result.rows[0].id})`);
     }
   }
 
@@ -133,7 +136,7 @@ Though I still wonder - can you cleanly separate them in practice? Even when I p
 
   for (const conv of sampleConversations) {
     // Check if this conversation already exists (by title)
-    const existing = db.prepare('SELECT id FROM conversations WHERE title = ?').get(conv.title);
+    const existing = await db.queryOne<{ id: number }>('SELECT id FROM conversations WHERE title = $1', [conv.title]);
     if (existing) {
       console.log(`Conversation "${conv.title.substring(0, 40)}..." already exists, skipping`);
       continue;
@@ -142,31 +145,32 @@ Though I still wonder - can you cleanly separate them in practice? Even when I p
     const creatorId = userIds[conv.creator];
 
     // Create conversation
-    const convResult = db.prepare(`
+    const convResult = await db.pool.query(`
       INSERT INTO conversations (title, topic, description, creator_id, status)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(conv.title, conv.topic, conv.description, creatorId, conv.status);
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id
+    `, [conv.title, conv.topic, conv.description, creatorId, conv.status]);
 
-    const conversationId = convResult.lastInsertRowid as number;
+    const conversationId = convResult.rows[0].id;
 
     // Add creator as participant
-    db.prepare(`
+    await db.pool.query(`
       INSERT INTO conversation_participants (conversation_id, user_id, role)
-      VALUES (?, ?, 'initiator')
-    `).run(conversationId, creatorId);
+      VALUES ($1, $2, 'initiator')
+    `, [conversationId, creatorId]);
 
     // Add opening message (public)
-    db.prepare(`
+    await db.pool.query(`
       INSERT INTO messages (conversation_id, author_id, content, is_public, message_order)
-      VALUES (?, ?, ?, 1, 0)
-    `).run(conversationId, creatorId, conv.openingMessage);
+      VALUES ($1, $2, $3, 1, 0)
+    `, [conversationId, creatorId, conv.openingMessage]);
 
     // Add to matching queue if status is 'matching'
     if (conv.status === 'matching') {
-      db.prepare(`
+      await db.pool.query(`
         INSERT INTO matching_queue (user_id, conversation_id, topic, description, matched)
-        VALUES (?, ?, ?, ?, 0)
-      `).run(creatorId, conversationId, conv.topic, conv.description);
+        VALUES ($1, $2, $3, $4, 0)
+      `, [creatorId, conversationId, conv.topic, conv.description]);
     }
 
     // If there's a responder, add them and their messages
@@ -174,23 +178,23 @@ Though I still wonder - can you cleanly separate them in practice? Even when I p
       const responderId = userIds[conv.responder];
 
       // Add responder as participant
-      db.prepare(`
+      await db.pool.query(`
         INSERT INTO conversation_participants (conversation_id, user_id, role)
-        VALUES (?, ?, 'responder')
-      `).run(conversationId, responderId);
+        VALUES ($1, $2, 'responder')
+      `, [conversationId, responderId]);
 
       // Add response message (public - it's the 2nd message)
-      db.prepare(`
+      await db.pool.query(`
         INSERT INTO messages (conversation_id, author_id, content, is_public, message_order)
-        VALUES (?, ?, ?, 1, 1)
-      `).run(conversationId, responderId, conv.response);
+        VALUES ($1, $2, $3, 1, 1)
+      `, [conversationId, responderId, conv.response]);
 
       // If there's a second response from creator (private - 3rd message)
       if ('secondResponse' in conv && conv.secondResponse) {
-        db.prepare(`
+        await db.pool.query(`
           INSERT INTO messages (conversation_id, author_id, content, is_public, message_order)
-          VALUES (?, ?, ?, 0, 2)
-        `).run(conversationId, creatorId, conv.secondResponse);
+          VALUES ($1, $2, $3, 0, 2)
+        `, [conversationId, creatorId, conv.secondResponse]);
       }
     }
 
@@ -203,6 +207,12 @@ Though I still wonder - can you cleanly separate them in practice? Even when I p
   console.log('  - bob');
   console.log('  - charlie');
   console.log('  - dana');
+
+  await db.close();
 }
 
-seed().catch(console.error);
+seed().catch((err) => {
+  console.error(err);
+  db.close();
+  process.exit(1);
+});

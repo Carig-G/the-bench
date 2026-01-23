@@ -7,24 +7,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const migrationsDir = join(__dirname, 'migrations');
 
-function ensureMigrationsTable() {
-  db.exec(`
+async function ensureMigrationsTable(): Promise<void> {
+  await db.pool.query(`
     CREATE TABLE IF NOT EXISTS migrations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
-      executed_at TEXT DEFAULT CURRENT_TIMESTAMP
+      executed_at TIMESTAMP DEFAULT NOW()
     )
   `);
 }
 
-function getExecutedMigrations(): string[] {
-  const rows = db.prepare('SELECT name FROM migrations ORDER BY id').all() as { name: string }[];
-  return rows.map((row) => row.name);
+async function getExecutedMigrations(): Promise<string[]> {
+  const result = await db.pool.query('SELECT name FROM migrations ORDER BY id');
+  return result.rows.map((row: { name: string }) => row.name);
 }
 
-function runMigrations() {
-  ensureMigrationsTable();
-  const executed = getExecutedMigrations();
+async function runMigrations(): Promise<void> {
+  await ensureMigrationsTable();
+  const executed = await getExecutedMigrations();
 
   const files = readdirSync(migrationsDir)
     .filter((f) => f.endsWith('.sql'))
@@ -37,21 +37,26 @@ function runMigrations() {
     }
 
     const filePath = join(migrationsDir, file);
-    const sql = readFileSync(filePath, 'utf-8');
+    let sql = readFileSync(filePath, 'utf-8');
 
     // Extract UP migration (before -- DOWN marker)
     const upSql = sql.split('-- DOWN')[0].trim();
 
     console.log(`Running migration: ${file}`);
-    db.exec(upSql);
-    db.prepare('INSERT INTO migrations (name) VALUES (?)').run(file);
+
+    // Execute the migration
+    await db.pool.query(upSql);
+
+    // Record the migration
+    await db.pool.query('INSERT INTO migrations (name) VALUES ($1)', [file]);
+
     console.log(`Completed: ${file}`);
   }
 }
 
-function rollbackLastMigration() {
-  ensureMigrationsTable();
-  const executed = getExecutedMigrations();
+async function rollbackLastMigration(): Promise<void> {
+  await ensureMigrationsTable();
+  const executed = await getExecutedMigrations();
 
   if (executed.length === 0) {
     console.log('No migrations to rollback');
@@ -72,25 +77,25 @@ function rollbackLastMigration() {
   const downSql = parts[1].trim();
 
   console.log(`Rolling back: ${lastMigration}`);
-  db.exec(downSql);
-  db.prepare('DELETE FROM migrations WHERE name = ?').run(lastMigration);
+  await db.pool.query(downSql);
+  await db.pool.query('DELETE FROM migrations WHERE name = $1', [lastMigration]);
   console.log(`Rolled back: ${lastMigration}`);
 }
 
-function main() {
+async function main(): Promise<void> {
   const command = process.argv[2];
 
   try {
     if (command === 'down') {
-      rollbackLastMigration();
+      await rollbackLastMigration();
     } else {
-      runMigrations();
+      await runMigrations();
     }
   } catch (error) {
     console.error('Migration failed:', error);
     process.exit(1);
   } finally {
-    db.close();
+    await db.close();
   }
 }
 

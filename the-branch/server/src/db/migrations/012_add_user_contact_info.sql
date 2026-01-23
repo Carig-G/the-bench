@@ -4,4 +4,5 @@ ALTER TABLE users ADD COLUMN display_name TEXT;
 
 -- DOWN
 
--- SQLite doesn't support DROP COLUMN easily, would need to recreate table
+ALTER TABLE users DROP COLUMN IF EXISTS contact_info;
+ALTER TABLE users DROP COLUMN IF EXISTS display_name;

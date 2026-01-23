@@ -2,10 +2,10 @@
 -- Each conversation can have multiple tags
 
 CREATE TABLE conversation_tags (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   tag TEXT NOT NULL,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Index for efficient lookups by conversation

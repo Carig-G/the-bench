@@ -1,10 +1,10 @@
 -- Conversation participants - exactly 2 per conversation
 CREATE TABLE conversation_participants (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('initiator', 'responder')),
-  joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  joined_at TIMESTAMP DEFAULT NOW(),
   UNIQUE(conversation_id, user_id),
   UNIQUE(conversation_id, role)
 );

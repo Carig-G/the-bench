@@ -1,8 +1,8 @@
 CREATE TABLE users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_users_username ON users(username);

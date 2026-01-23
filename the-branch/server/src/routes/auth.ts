@@ -27,7 +27,7 @@ router.post('/register', async (req: AuthRequest, res: Response) => {
     }
 
     // Check if username exists
-    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+    const existing = await db.queryOne<{ id: number }>('SELECT id FROM users WHERE username = $1', [username]);
 
     if (existing) {
       res.status(409).json({ error: 'Username already taken' });
@@ -36,14 +36,12 @@ router.post('/register', async (req: AuthRequest, res: Response) => {
 
     // Hash password and create user
     const passwordHash = await bcrypt.hash(password, 10);
-    const result = db.prepare(
-      'INSERT INTO users (username, password_hash) VALUES (?, ?)'
-    ).run(username, passwordHash);
+    const result = await db.pool.query(
+      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, created_at',
+      [username, passwordHash]
+    );
 
-    const user = db.prepare(
-      'SELECT id, username, created_at FROM users WHERE id = ?'
-    ).get(result.lastInsertRowid) as User;
-
+    const user = result.rows[0] as User;
     const token = generateToken({ userId: user.id, username: user.username });
 
     res.status(201).json({
@@ -66,7 +64,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
+    const user = await db.queryOne<User>('SELECT * FROM users WHERE username = $1', [username]);
 
     if (!user) {
       res.status(401).json({ error: 'Invalid credentials' });
@@ -93,11 +91,12 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
 });
 
 // Get current user
-router.get('/me', authenticateToken, (req: AuthRequest, res: Response) => {
+router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const user = db.prepare(
-      'SELECT id, username, display_name, contact_info, created_at FROM users WHERE id = ?'
-    ).get(req.user!.userId) as (User & { display_name: string | null; contact_info: string | null }) | undefined;
+    const user = await db.queryOne<User & { display_name: string | null; contact_info: string | null }>(
+      'SELECT id, username, display_name, contact_info, created_at FROM users WHERE id = $1',
+      [req.user!.userId]
+    );
 
     if (!user) {
       res.status(404).json({ error: 'User not found' });
@@ -112,22 +111,23 @@ router.get('/me', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // Update user profile (display name and contact info for reveals)
-router.patch('/profile', authenticateToken, (req: AuthRequest, res: Response) => {
+router.patch('/profile', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { display_name, contact_info } = req.body;
     const userId = req.user!.userId;
 
     // Build update query dynamically
     const updates: string[] = [];
-    const params: (string | number)[] = [];
+    const params: (string | number | null)[] = [];
+    let paramIndex = 1;
 
     if (display_name !== undefined) {
-      updates.push('display_name = ?');
+      updates.push(`display_name = $${paramIndex++}`);
       params.push(display_name || null);
     }
 
     if (contact_info !== undefined) {
-      updates.push('contact_info = ?');
+      updates.push(`contact_info = $${paramIndex++}`);
       params.push(contact_info || null);
     }
 
@@ -137,11 +137,12 @@ router.patch('/profile', authenticateToken, (req: AuthRequest, res: Response) =>
     }
 
     params.push(userId);
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    await db.pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex}`, params);
 
-    const user = db.prepare(
-      'SELECT id, username, display_name, contact_info, created_at FROM users WHERE id = ?'
-    ).get(userId);
+    const user = await db.queryOne(
+      'SELECT id, username, display_name, contact_info, created_at FROM users WHERE id = $1',
+      [userId]
+    );
 
     res.json({ user });
   } catch (error) {

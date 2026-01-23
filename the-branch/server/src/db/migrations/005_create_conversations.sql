@@ -3,14 +3,14 @@
 
 -- Conversations table (replaces stories concept)
 CREATE TABLE conversations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   topic TEXT NOT NULL,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'matching' CHECK (status IN ('matching', 'active', 'completed', 'archived')),
   creator_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX idx_conversations_creator ON conversations(creator_id);
