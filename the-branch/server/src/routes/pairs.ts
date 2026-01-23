@@ -63,20 +63,16 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.userId;
 
+    // Return partner's moniker when revealed (instead of real identity)
+    // Anonymity is preserved - we only share the moniker, not username/email/contact
     const pairsResult = await db.pool.query(`
       SELECT cp.*,
-        CASE WHEN cp.revealed = 1 THEN
-          CASE WHEN cp.user_a_id = $1 THEN u_b.username ELSE u_a.username END
-        END as partner_username,
         CASE WHEN cp.user_a_id = $1 THEN cp.user_b_id ELSE cp.user_a_id END as partner_id,
         CASE WHEN cp.user_a_id = $1 THEN cp.user_a_reveal_requested ELSE cp.user_b_reveal_requested END as i_requested_reveal,
         CASE WHEN cp.user_a_id = $1 THEN cp.user_b_reveal_requested ELSE cp.user_a_reveal_requested END as partner_requested_reveal,
         CASE WHEN cp.revealed = 1 THEN
-          CASE WHEN cp.user_a_id = $1 THEN u_b.contact_info ELSE u_a.contact_info END
-        END as partner_contact_info,
-        CASE WHEN cp.revealed = 1 THEN
-          CASE WHEN cp.user_a_id = $1 THEN u_b.display_name ELSE u_a.display_name END
-        END as partner_display_name
+          CASE WHEN cp.user_a_id = $1 THEN u_b.moniker ELSE u_a.moniker END
+        END as partner_moniker
       FROM conversation_pairs cp
       JOIN users u_a ON cp.user_a_id = u_a.id
       JOIN users u_b ON cp.user_b_id = u_b.id
@@ -165,21 +161,20 @@ router.post('/:pairId/request-reveal', authenticateToken, async (req: AuthReques
         WHERE id = $1
       `, [pairId]);
 
-      // Fetch the revealed info
+      // Fetch the revealed info (moniker only - no real identity)
       const updatedPairResult = await db.pool.query(`
         SELECT cp.*,
-          u_a.username as user_a_username, u_a.display_name as user_a_display_name, u_a.contact_info as user_a_contact_info,
-          u_b.username as user_b_username, u_b.display_name as user_b_display_name, u_b.contact_info as user_b_contact_info
+          CASE WHEN cp.user_a_id = $2 THEN u_b.moniker ELSE u_a.moniker END as partner_moniker
         FROM conversation_pairs cp
         JOIN users u_a ON cp.user_a_id = u_a.id
         JOIN users u_b ON cp.user_b_id = u_b.id
         WHERE cp.id = $1
-      `, [pairId]);
+      `, [pairId, userId]);
 
       res.json({
         pair: updatedPairResult.rows[0],
         revealed: true,
-        message: 'Both users agreed to reveal! You can now see each other\'s contact info.'
+        message: 'Both users agreed to reveal! You can now see each other\'s monikers.'
       });
     } else {
       // Just mark this user's request
@@ -208,11 +203,10 @@ router.get('/revealed', authenticateToken, async (req: AuthRequest, res: Respons
   try {
     const userId = req.user!.userId;
 
+    // Return partner's moniker only - no real identity info
     const pairsResult = await db.pool.query(`
       SELECT cp.*,
-        CASE WHEN cp.user_a_id = $1 THEN u_b.username ELSE u_a.username END as partner_username,
-        CASE WHEN cp.user_a_id = $1 THEN u_b.display_name ELSE u_a.display_name END as partner_display_name,
-        CASE WHEN cp.user_a_id = $1 THEN u_b.contact_info ELSE u_a.contact_info END as partner_contact_info,
+        CASE WHEN cp.user_a_id = $1 THEN u_b.moniker ELSE u_a.moniker END as partner_moniker,
         CASE WHEN cp.user_a_id = $1 THEN cp.user_b_id ELSE cp.user_a_id END as partner_id
       FROM conversation_pairs cp
       JOIN users u_a ON cp.user_a_id = u_a.id

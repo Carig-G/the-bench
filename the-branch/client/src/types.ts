@@ -1,6 +1,7 @@
 export interface User {
   id: number;
   username: string;
+  moniker?: string | null;
   display_name?: string | null;
   contact_info?: string | null;
   created_at: string;
@@ -89,12 +90,10 @@ export interface ConversationPair {
   revealed_at: string | null;
   created_at: string;
   updated_at: string;
-  partner_username?: string;
   partner_id?: number;
   i_requested_reveal?: number;
   partner_requested_reveal?: number;
-  partner_contact_info?: string | null;
-  partner_display_name?: string | null;
+  partner_moniker?: string | null;
 }
 
 export interface UserStats {

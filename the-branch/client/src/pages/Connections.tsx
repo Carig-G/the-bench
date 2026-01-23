@@ -1,19 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { pairs, auth } from '../api';
+import { pairs } from '../api';
 import { useAuth } from '../context/AuthContext';
-import type { ConversationPair, UserStats, User } from '../types';
+import type { ConversationPair, UserStats } from '../types';
 
 export function Connections() {
-  const { user, refreshUser } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState<UserStats | null>(null);
   const [pairsList, setPairsList] = useState<ConversationPair[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [showProfileModal, setShowProfileModal] = useState(false);
-  const [profile, setProfile] = useState({ display_name: '', contact_info: '' });
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -21,11 +18,6 @@ export function Connections() {
       return;
     }
     loadData();
-    // Initialize profile from user data
-    setProfile({
-      display_name: (user as User & { display_name?: string })?.display_name || '',
-      contact_info: (user as User & { contact_info?: string })?.contact_info || '',
-    });
   }, [user]);
 
   const loadData = async () => {
@@ -49,27 +41,12 @@ export function Connections() {
       // Reload data to reflect changes
       loadData();
       if (result.revealed) {
-        alert('Identity revealed! You can now see each other\'s contact info.');
+        alert('Monikers revealed! You can now see each other\'s identities on this page.');
       } else {
         alert('Reveal request sent! Waiting for your partner to agree.');
       }
     } catch (err: any) {
       alert(err.message || 'Failed to request reveal');
-    }
-  };
-
-  const handleSaveProfile = async () => {
-    setSaving(true);
-    try {
-      await auth.updateProfile(profile);
-      // Refresh user context to get updated data
-      await refreshUser();
-      setShowProfileModal(false);
-      alert('Profile updated! This info will be shared when you reveal your identity.');
-    } catch (err: any) {
-      alert(err.message || 'Failed to save profile');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -79,9 +56,8 @@ export function Connections() {
   const revealedPairs = pairsList.filter(p => p.revealed);
   const inProgressPairs = pairsList.filter(p => p.conversation_count < 10);
 
-  // Generate consistent anonymous name for unrevealed partners
+  // Generate consistent anonymous name for unrevealed partners (based on pair ID)
   const getAnonymousName = (pairId: number) => {
-    // Use pair ID to generate a consistent anonymous identifier
     const adjectives = ['Curious', 'Thoughtful', 'Friendly', 'Wise', 'Kind', 'Bright', 'Calm', 'Bold'];
     const animals = ['Owl', 'Fox', 'Bear', 'Deer', 'Wolf', 'Hawk', 'Otter', 'Raven'];
     const adjIndex = pairId % adjectives.length;
@@ -92,17 +68,9 @@ export function Connections() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-warmgray-800 mb-2">Connections</h1>
-          <p className="text-warmgray-500">Track your conversation partners and reveals</p>
-        </div>
-        <button
-          onClick={() => setShowProfileModal(true)}
-          className="btn btn-outline"
-        >
-          Edit Profile
-        </button>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-warmgray-800 mb-2">Connections</h1>
+        <p className="text-warmgray-500">Track your conversation partners and reveals</p>
       </div>
 
       {error && (
@@ -151,9 +119,9 @@ export function Connections() {
           <div className="bg-sage-50 border border-sage-200 rounded-xl p-6 mb-8">
             <h3 className="font-semibold text-sage-700 mb-2">How Reveals Work</h3>
             <p className="text-sage-600 text-sm">
-              After 10 conversations with the same person, you can both choose to reveal your identities.
-              Both parties must agree - it's a mutual decision. Once revealed, you'll see each other's
-              contact info and display name.
+              After 10 conversations with the same person, you can both choose to reveal your monikers.
+              Both parties must agree - it's a mutual decision. Your anonymity is always preserved in
+              conversations (you'll still appear as "Person A" or "Person B").
             </p>
           </div>
 
@@ -216,20 +184,15 @@ export function Connections() {
                       <div>
                         <div className="flex items-center gap-3 mb-2">
                           <span className="font-semibold text-warmgray-700 text-lg">
-                            {pair.partner_display_name || pair.partner_username}
+                            {pair.partner_moniker || getAnonymousName(pair.id)}
                           </span>
                           <span className="px-2 py-0.5 bg-sage-100 text-sage-600 rounded-full text-xs">
                             {pair.conversation_count} conversations
                           </span>
                         </div>
-                        <p className="text-sm text-warmgray-500 mb-1">
-                          @{pair.partner_username}
+                        <p className="text-sm text-warmgray-500">
+                          You've had {pair.conversation_count} meaningful conversations together
                         </p>
-                        {pair.partner_contact_info && (
-                          <p className="text-sm text-sage-600 mt-2">
-                            <span className="font-medium">Contact:</span> {pair.partner_contact_info}
-                          </p>
-                        )}
                       </div>
                       <span className="text-xs text-warmgray-400">
                         Revealed {pair.revealed_at ? new Date(pair.revealed_at).toLocaleDateString() : ''}
@@ -284,67 +247,11 @@ export function Connections() {
               <h2 className="text-xl font-semibold text-warmgray-700 mb-2">No connections yet</h2>
               <p className="text-warmgray-500 mb-6 max-w-md mx-auto">
                 Join conversations to start building connections. After 10 conversations with the same person,
-                you can both choose to reveal your identities.
+                you can both choose to reveal your monikers.
               </p>
             </div>
           )}
         </>
-      )}
-
-      {/* Profile Modal */}
-      {showProfileModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6">
-            <h2 className="text-xl font-bold text-warmgray-800 mb-4">Edit Profile</h2>
-            <p className="text-sm text-warmgray-500 mb-6">
-              This information will be shared with conversation partners when you mutually reveal identities.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-warmgray-700 mb-1">
-                  Display Name
-                </label>
-                <input
-                  type="text"
-                  value={profile.display_name}
-                  onChange={(e) => setProfile({ ...profile, display_name: e.target.value })}
-                  placeholder="Your real name or preferred name"
-                  className="w-full px-4 py-2 rounded-lg border border-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-warmgray-700 mb-1">
-                  Contact Info
-                </label>
-                <textarea
-                  value={profile.contact_info}
-                  onChange={(e) => setProfile({ ...profile, contact_info: e.target.value })}
-                  placeholder="Email, social media handles, or other ways to reach you..."
-                  rows={3}
-                  className="w-full px-4 py-2 rounded-lg border border-cream-300 focus:outline-none focus:ring-2 focus:ring-sage-400"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowProfileModal(false)}
-                className="btn btn-outline flex-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveProfile}
-                disabled={saving}
-                className="btn btn-primary flex-1"
-              >
-                {saving ? 'Saving...' : 'Save Profile'}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

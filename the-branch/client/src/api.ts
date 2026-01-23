@@ -71,6 +71,11 @@ export const auth = {
 
   me: () => request<{ user: AuthResponse['user'] }>('/auth/me'),
 
+  shuffleMoniker: () =>
+    request<{ moniker: string }>('/auth/shuffle-moniker', {
+      method: 'POST',
+    }),
+
   updateProfile: (data: { display_name?: string; contact_info?: string }) =>
     request<{ user: User }>('/auth/profile', {
       method: 'PATCH',

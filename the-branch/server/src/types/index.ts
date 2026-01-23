@@ -2,6 +2,7 @@ export interface User {
   id: number;
   username: string;
   password_hash: string;
+  moniker?: string | null;
   created_at: Date;
 }
 

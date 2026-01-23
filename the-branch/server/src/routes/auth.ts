@@ -6,6 +6,35 @@ import { User } from '../types/index.js';
 
 const router = Router();
 
+// Moniker generation pools
+const ADJECTIVES = [
+  'Curious', 'Thoughtful', 'Friendly', 'Wise', 'Kind', 'Bright', 'Calm', 'Bold',
+  'Gentle', 'Quiet', 'Warm', 'Swift', 'Keen', 'Mellow', 'Witty', 'Steady',
+  'Clever', 'Patient', 'Brave', 'Humble', 'Serene', 'Lively', 'Earnest', 'Noble'
+];
+
+const ANIMALS = [
+  'Owl', 'Fox', 'Bear', 'Deer', 'Wolf', 'Hawk', 'Otter', 'Raven',
+  'Cat', 'Hare', 'Seal', 'Crane', 'Lynx', 'Dove', 'Elk', 'Finch'
+];
+
+const NOUNS = [
+  'Storm', 'River', 'Mountain', 'Ocean', 'Forest', 'Meadow', 'Canyon', 'Valley',
+  'Edge', 'Dawn', 'Dusk', 'Star', 'Moon', 'Cloud', 'Wave', 'Wind'
+];
+
+function generateMoniker(): string {
+  const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  // Mix between animals and nouns for variety (50/50 chance)
+  if (Math.random() < 0.5) {
+    const animal = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+    return `${adjective} ${animal}`;
+  } else {
+    const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+    return `${adjective} ${noun}`;
+  }
+}
+
 // Register new user
 router.post('/register', async (req: AuthRequest, res: Response) => {
   try {
@@ -34,18 +63,19 @@ router.post('/register', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // Hash password and create user
+    // Hash password and create user with a generated moniker
     const passwordHash = await bcrypt.hash(password, 10);
+    const moniker = generateMoniker();
     const result = await db.pool.query(
-      'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, created_at',
-      [username, passwordHash]
+      'INSERT INTO users (username, password_hash, moniker) VALUES ($1, $2, $3) RETURNING id, username, moniker, created_at',
+      [username, passwordHash, moniker]
     );
 
-    const user = result.rows[0] as User;
+    const user = result.rows[0] as User & { moniker: string };
     const token = generateToken({ userId: user.id, username: user.username });
 
     res.status(201).json({
-      user: { id: user.id, username: user.username, created_at: user.created_at },
+      user: { id: user.id, username: user.username, moniker: user.moniker, created_at: user.created_at },
       token,
     });
   } catch (error) {
@@ -81,7 +111,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
     const token = generateToken({ userId: user.id, username: user.username });
 
     res.json({
-      user: { id: user.id, username: user.username, created_at: user.created_at },
+      user: { id: user.id, username: user.username, moniker: (user as any).moniker, created_at: user.created_at },
       token,
     });
   } catch (error) {
@@ -93,8 +123,8 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
 // Get current user
 router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await db.queryOne<User & { display_name: string | null; contact_info: string | null }>(
-      'SELECT id, username, display_name, contact_info, created_at FROM users WHERE id = $1',
+    const user = await db.queryOne<User & { moniker: string | null; display_name: string | null; contact_info: string | null }>(
+      'SELECT id, username, moniker, display_name, contact_info, created_at FROM users WHERE id = $1',
       [req.user!.userId]
     );
 
@@ -107,6 +137,21 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user' });
+  }
+});
+
+// Shuffle moniker - generates a new random moniker for the user
+router.post('/shuffle-moniker', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+    const newMoniker = generateMoniker();
+
+    await db.pool.query('UPDATE users SET moniker = $1 WHERE id = $2', [newMoniker, userId]);
+
+    res.json({ moniker: newMoniker });
+  } catch (error) {
+    console.error('Shuffle moniker error:', error);
+    res.status(500).json({ error: 'Failed to shuffle moniker' });
   }
 });
 

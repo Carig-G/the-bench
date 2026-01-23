@@ -10,10 +10,21 @@ export async function initializeDatabase(): Promise<void> {
       id SERIAL PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      moniker TEXT,
       display_name TEXT,
       contact_info TEXT,
       created_at TIMESTAMP DEFAULT NOW()
     )
+  `);
+
+  // Add moniker column if it doesn't exist (for existing databases)
+  await db.pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='moniker') THEN
+        ALTER TABLE users ADD COLUMN moniker TEXT;
+      END IF;
+    END $$;
   `);
   await db.pool.query(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { auth } from '../api';
 
 export function Register() {
   const [username, setUsername] = useState('');
@@ -8,7 +9,10 @@ export function Register() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { register } = useAuth();
+  const [shuffling, setShuffling] = useState(false);
+  const [step, setStep] = useState<'credentials' | 'moniker'>('credentials');
+  const [moniker, setMoniker] = useState('');
+  const { register, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -29,13 +33,80 @@ export function Register() {
 
     try {
       await register(username, password);
-      navigate('/');
+      // Get the user's moniker from the API
+      const { user } = await auth.me();
+      setMoniker(user.moniker || 'Anonymous User');
+      setStep('moniker');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleShuffle = async () => {
+    setShuffling(true);
+    try {
+      const result = await auth.shuffleMoniker();
+      setMoniker(result.moniker);
+      await refreshUser();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to shuffle moniker');
+    } finally {
+      setShuffling(false);
+    }
+  };
+
+  const handleConfirm = () => {
+    navigate('/');
+  };
+
+  if (step === 'moniker') {
+    return (
+      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-4">
+        <div className="card w-full max-w-md text-center">
+          <div className="w-16 h-16 bg-sage-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-sage-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+          </div>
+
+          <h1 className="text-2xl font-bold text-warmgray-800 mb-2">Your Moniker</h1>
+          <p className="text-warmgray-500 mb-6">
+            This is your anonymous identity on The Bench. Other users will see this after 10 conversations.
+          </p>
+
+          <div className="bg-sage-50 border border-sage-200 rounded-xl p-6 mb-6">
+            <div className="text-2xl font-bold text-sage-700 mb-2">
+              {moniker}
+            </div>
+            <p className="text-sm text-sage-600">
+              Your unique moniker
+            </p>
+          </div>
+
+          <button
+            onClick={handleShuffle}
+            disabled={shuffling}
+            className="btn btn-outline w-full mb-3"
+          >
+            {shuffling ? 'Shuffling...' : 'Shuffle for a new one'}
+          </button>
+
+          <button
+            onClick={handleConfirm}
+            className="btn btn-primary w-full"
+          >
+            Keep this moniker
+          </button>
+
+          <p className="mt-6 text-xs text-warmgray-400">
+            Your moniker is permanent once you start conversing. You won't be able to change it later.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-4">
@@ -64,6 +135,7 @@ export function Register() {
               maxLength={50}
               required
             />
+            <p className="text-xs text-warmgray-400 mt-1">This is private and used only for login</p>
           </div>
 
           <div>
