@@ -212,12 +212,12 @@ export function Connections() {
                 Building Connections ({inProgressPairs.length})
               </h2>
               <div className="grid gap-3">
-                {inProgressPairs.map(pair => (
+                {inProgressPairs.map((pair, i) => (
                   <div key={pair.id} className="bg-white rounded-xl p-4 border border-cream-300">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <span className="font-medium text-warmgray-700">
-                          {getAnonymousName(pair.id)}
+                          Anonymous Partner #{i + 1}
                         </span>
                         <span className="text-sm text-warmgray-500">
                           {pair.conversation_count} / 10 conversations

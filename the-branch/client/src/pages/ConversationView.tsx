@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { conversations, messages as messagesApi, payments } from '../api';
+import { conversations, messages as messagesApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import type { ConversationWithDetails, Message } from '../types';
 
@@ -12,7 +12,7 @@ export function ConversationView() {
   const [error, setError] = useState('');
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
-  const [paying, setPaying] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
 
   useEffect(() => {
     loadConversation();
@@ -49,16 +49,14 @@ export function ConversationView() {
     }
   };
 
-  const handlePayment = async () => {
+  const handleContinueReading = async () => {
     if (!id) return;
-    setPaying(true);
     try {
-      await payments.create(parseInt(id), 1.99);
-      loadConversation();
+      const result = await conversations.get(parseInt(id), { full: true });
+      setData(result);
+      setUnlocked(true);
     } catch (err: any) {
-      setError(err.message || 'Payment failed');
-    } finally {
-      setPaying(false);
+      setError(err.message || 'Failed to load full conversation');
     }
   };
 
@@ -91,8 +89,8 @@ export function ConversationView() {
     );
   }
 
-  const { conversation, messages, has_paid, is_participant } = data;
-  const canSeeAll = is_participant || has_paid;
+  const { conversation, messages, has_paid, is_participant, hidden_message_count } = data;
+  const canSeeAll = is_participant || has_paid || unlocked;
   const canReply = is_participant && conversation.status === 'active';
   const isWaitingForMatch = conversation.status === 'matching' && is_participant;
   const canJoin = conversation.status === 'matching' && !is_participant && user;
@@ -100,7 +98,7 @@ export function ConversationView() {
   const publicMessages = messages.filter(m => m.is_public);
   const privateMessages = messages.filter(m => !m.is_public);
   const totalMessageCount = messages.length;
-  const hiddenCount = canSeeAll ? 0 : privateMessages.length;
+  const hiddenCount = canSeeAll ? 0 : (hidden_message_count || 0);
 
   const getParticipantLabel = (role: string | undefined) => {
     if (role === 'initiator') return 'Person A';
@@ -163,40 +161,20 @@ export function ConversationView() {
           <MessageBubble key={message.id} message={message} getLabel={getParticipantLabel} />
         ))}
 
-        {/* Paywall */}
-        {!canSeeAll && privateMessages.length > 0 && (
-          <div className="paywall bg-gradient-to-b from-cream-100 to-cream-200 rounded-xl py-10 px-6 my-8">
+        {/* Continue Reading CTA */}
+        {!canSeeAll && hiddenCount > 0 && (
+          <div className="bg-gradient-to-b from-cream-100 to-cream-200 rounded-xl py-10 px-6 my-8">
             <div className="max-w-md mx-auto text-center">
-              <h3 className="text-xl font-semibold text-warmgray-700 mb-3">
-                Continue reading this conversation
-              </h3>
               <p className="text-warmgray-500 mb-6">
                 {hiddenCount} more message{hiddenCount !== 1 ? 's' : ''} to discover.
                 The dialogue is just getting started.
               </p>
-              {user ? (
-                <div className="space-y-3">
-                  <button
-                    onClick={handlePayment}
-                    disabled={paying}
-                    className="btn btn-primary w-full py-3"
-                  >
-                    {paying ? 'Processing...' : 'Unlock for $1.99'}
-                  </button>
-                  <p className="text-xs text-warmgray-500">
-                    Revenue splits 50/50 between the conversationalists
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <Link to="/register" className="btn btn-primary w-full py-3 block">
-                    Sign up to unlock
-                  </Link>
-                  <p className="text-sm text-warmgray-500">
-                    Already have an account? <Link to="/login" className="text-sage-500 hover:underline">Log in</Link>
-                  </p>
-                </div>
-              )}
+              <button
+                onClick={handleContinueReading}
+                className="btn btn-primary w-full py-3"
+              >
+                Continue Reading
+              </button>
             </div>
           </div>
         )}

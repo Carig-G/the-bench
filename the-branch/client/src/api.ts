@@ -92,7 +92,8 @@ export const conversations = {
     return request<PaginatedConversations<Conversation>>(url);
   },
 
-  get: (id: number) => request<ConversationWithDetails>(`/conversations/${id}`),
+  get: (id: number, opts?: { full?: boolean }) =>
+    request<ConversationWithDetails>(`/conversations/${id}${opts?.full ? '?full=true' : ''}`),
 
   create: (data: {
     title: string;

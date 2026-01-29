@@ -109,6 +109,7 @@ export interface ConversationWithDetails {
   messages: Message[];
   has_paid?: boolean;
   is_participant?: boolean;
+  hidden_message_count?: number;
 }
 
 export interface PaginatedConversations<T> {

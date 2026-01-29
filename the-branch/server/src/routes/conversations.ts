@@ -299,8 +299,10 @@ router.get('/:id', optionalAuth, async (req: AuthRequest, res: Response) => {
     }
 
     // Get messages - public ones for everyone, all for participants/paid users
+    // ?full=true allows non-participants to see all messages (testing mode)
+    const fullAccess = req.query.full === 'true';
     let messagesResult;
-    if (isParticipant || hasPaid) {
+    if (isParticipant || hasPaid || fullAccess) {
       messagesResult = await db.pool.query(`
         SELECT m.*, u.username as author_username, cp.role as author_role
         FROM messages m
@@ -321,6 +323,16 @@ router.get('/:id', optionalAuth, async (req: AuthRequest, res: Response) => {
       `, [id]);
     }
 
+    // Count hidden messages for non-participants
+    let hiddenMessageCount = 0;
+    if (!isParticipant && !hasPaid && !fullAccess) {
+      const hiddenResult = await db.pool.query(
+        'SELECT COUNT(*) as count FROM messages WHERE conversation_id = $1 AND is_public = 0',
+        [id]
+      );
+      hiddenMessageCount = parseInt(hiddenResult.rows[0].count);
+    }
+
     // Convert is_public from integer to boolean
     const messages = messagesResult.rows.map((m: any) => ({ ...m, is_public: !!m.is_public }));
 
@@ -330,6 +342,7 @@ router.get('/:id', optionalAuth, async (req: AuthRequest, res: Response) => {
       messages,
       has_paid: hasPaid,
       is_participant: isParticipant,
+      hidden_message_count: hiddenMessageCount,
     });
   } catch (error) {
     console.error('Get conversation error:', error);
